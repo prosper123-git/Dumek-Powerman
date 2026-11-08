@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      function validProfile() {
+        return request.resource.data.keys().hasAll(['firstName', 'surname', 'email'])
+          && request.resource.data.keys().hasOnly([
+            'firstName', 'surname', 'email', 'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.firstName is string
+          && request.resource.data.firstName.size() > 0
+          && request.resource.data.firstName.size() <= 80
+          && request.resource.data.surname is string
+          && request.resource.data.surname.size() <= 80
+          && request.resource.data.email == request.auth.token.email;
+      }
+
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && validProfile();
+      allow delete: if false;
+    }
+  }
+}
