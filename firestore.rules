@@ -1,30 +1,119 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isManager() {
+      return request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager';
+    }
+
+    function isStaff() {
+      return request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['cashier', 'manager'];
+    }
+
     match /products/{productId} {
       allow read: if true;
-      allow write: if false;
+      allow create, delete: if false;
+      allow update: if isStaff()
+        && resource.data.keys().hasAll(['available'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['available'])
+        && resource.data.available is int
+        && request.resource.data.available is int
+        && request.resource.data.available >= 0
+        && request.resource.data.available < resource.data.available;
     }
 
     match /users/{userId} {
-      function validProfile() {
+      function validProfile(expectedEmail) {
         return request.resource.data.keys().hasAll(['firstName', 'surname', 'email'])
           && request.resource.data.keys().hasOnly([
-            'firstName', 'surname', 'email', 'createdAt', 'updatedAt'
+            'firstName', 'surname', 'email', 'createdAt', 'updatedAt', 'role'
           ])
           && request.resource.data.firstName is string
           && request.resource.data.firstName.size() > 0
           && request.resource.data.firstName.size() <= 80
           && request.resource.data.surname is string
           && request.resource.data.surname.size() <= 80
-          && request.resource.data.email == request.auth.token.email;
+          && request.resource.data.email is string
+          && request.resource.data.email.size() > 0
+          && request.resource.data.email.size() <= 254
+          && request.resource.data.email == expectedEmail
+          && (!('role' in request.resource.data)
+            || request.resource.data.role == 'cashier'
+            || request.resource.data.role == 'manager');
       }
 
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow create, update: if request.auth != null
+      allow read: if request.auth != null
+        && (request.auth.uid == userId || isManager());
+      allow create: if isManager()
+        && validProfile(request.resource.data.email)
+        && request.resource.data.role == 'cashier'
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedAt == request.time;
+      allow update: if request.auth != null
         && request.auth.uid == userId
-        && validProfile();
+        && validProfile(request.auth.token.email)
+        && (!('role' in request.resource.data)
+          || ('role' in resource.data && request.resource.data.role == resource.data.role));
       allow delete: if false;
+    }
+
+    match /sales/{saleId} {
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly([
+          'saleNumber', 'cashierUid', 'cashierEmail', 'cashierName',
+          'lines', 'total', 'paymentType', 'amountReceived', 'balanceDue',
+          'change', 'customerName', 'customerPhone', 'createdAt'
+        ])
+        && request.resource.data.saleNumber is string
+        && request.resource.data.cashierUid == request.auth.uid
+        && request.resource.data.cashierEmail == request.auth.token.email
+        && request.resource.data.cashierName is string
+        && request.resource.data.lines is list
+        && request.resource.data.lines.size() > 0
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0
+        && request.resource.data.paymentType in ['cash', 'credit']
+        && request.resource.data.amountReceived is number
+        && ((request.resource.data.paymentType == 'cash'
+            && request.resource.data.amountReceived >= request.resource.data.total)
+          || (request.resource.data.paymentType == 'credit'
+            && request.resource.data.amountReceived == 0))
+        && request.resource.data.balanceDue is number
+        && ((request.resource.data.paymentType == 'credit'
+            && request.resource.data.balanceDue == request.resource.data.total)
+          || (request.resource.data.paymentType == 'cash'
+            && request.resource.data.balanceDue == 0))
+        && request.resource.data.change is number
+        && ((request.resource.data.paymentType == 'cash'
+            && request.resource.data.change == request.resource.data.amountReceived - request.resource.data.total)
+          || (request.resource.data.paymentType == 'credit'
+            && request.resource.data.change == 0))
+        && (request.resource.data.paymentType == 'cash'
+          || ('customerName' in request.resource.data
+            && request.resource.data.customerName is string
+            && request.resource.data.customerName.size() > 0
+            && request.resource.data.customerName.size() <= 160
+            && 'customerPhone' in request.resource.data
+            && request.resource.data.customerPhone is string
+            && request.resource.data.customerPhone.size() > 0
+            && request.resource.data.customerPhone.size() <= 30))
+        && request.resource.data.createdAt == request.time;
+      allow read: if isManager();
+      allow update, delete: if false;
+    }
+
+    match /loginEvents/{eventId} {
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly(['userId', 'email', 'name', 'createdAt'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.name is string
+        && request.resource.data.createdAt == request.time;
+      allow read: if isManager();
+      allow update, delete: if false;
     }
   }
 }

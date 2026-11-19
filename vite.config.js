@@ -45,7 +45,9 @@ export default defineConfig({
         cart: resolve(root, "cart.html"),
         contact: resolve(root, "contact.html"),
         login: resolve(root, "login.html"),
+        manager: resolve(root, "manager.html"),
         product: resolve(root, "product.html"),
+        pos: resolve(root, "pos.html"),
         shop: resolve(root, "shop.html")
       }
     }
